@@ -3,23 +3,7 @@ use std::net::{TcpListener, TcpStream};
 use std::time::Duration;
 use std::{fs, thread};
 
-struct ThreadPool;
-
-impl ThreadPool {
-    fn new(num_threads: u32) -> ThreadPool {
-        ThreadPool {}
-    }
-
-    fn run<F, T>(&self, func: F)
-    where
-        F: FnOnce() -> T,
-        F: Send + 'static,
-        T: Send + 'static,
-    {
-        // TODO!
-        thread::spawn(func);
-    }
-}
+use hello::ThreadPool;
 
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
@@ -29,6 +13,8 @@ fn main() {
         let stream = stream.unwrap();
         pool.run(|| handle_connection(stream));
     }
+
+    // TODO: join all threads in the pool...?
 }
 
 fn handle_connection(mut stream: TcpStream) {
