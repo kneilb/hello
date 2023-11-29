@@ -3,7 +3,7 @@ use std::thread;
 
 pub struct ThreadPool {
     workers: Vec<Worker>,
-    sender: mpsc::Sender<Job>,
+    sender: mpsc::Sender<Message>,
 }
 
 impl ThreadPool {
@@ -37,34 +37,70 @@ impl ThreadPool {
         F: FnOnce(),
         F: Send + 'static,
     {
-        // TODO!
-        // thread::spawn(func);
         let job = Box::new(func);
 
-        self.sender.send(job).unwrap();
+        self.sender.send(Message::NewJob(job)).unwrap();
+    }
+}
+
+impl Drop for ThreadPool {
+    fn drop(&mut self) {
+        println!("Sending Terminate message to all workers.");
+
+        // A worker will only ever read one Terminate message
+        for _ in &mut self.workers {
+            self.sender.send(Message::Terminate).unwrap();
+        }
+
+        println!("Shutting down all workers.");
+
+        for w in &mut self.workers {
+            println!("Shutting down worker {}.", w.id);
+
+            if let Some(thread) = w.thread.take() {
+                thread.join().unwrap();
+            }
+        }
+
+        println!("All workers deaded.");
     }
 }
 
 struct Worker {
     id: usize,
-    thread: thread::JoinHandle<()>,
+    thread: Option<thread::JoinHandle<()>>,
 }
 
 impl Worker {
-    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Worker {
+    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Message>>>) -> Worker {
         let thread = thread::spawn(move || {
             loop {
                 // Mutex guard dropped immediately after this statement.
                 // If we used while let, the lock would be held for the whole scope...!
-                let job = receiver.lock().unwrap().recv().unwrap();
-
-                println!("Worker {} got a Job - executing!", id);
-
-                job.call_box();
+                let msg = receiver.lock().unwrap().recv().unwrap();
+                match msg {
+                    Message::NewJob(job) => {
+                        println!("Worker {} got a NewJob - running!", id);
+                        job.call_box();
+                        println!("Worker {} finished the Job!", id);
+                    }
+                    Message::Terminate => {
+                        println!("Worker {} got Terminate - exiting!", id);
+                        break;
+                    }
+                }
             }
         });
-        Worker { id, thread }
+        Worker {
+            id,
+            thread: Some(thread),
+        }
     }
+}
+
+enum Message {
+    NewJob(Job),
+    Terminate,
 }
 
 // Workaround for weirdness in compiler, which was apparently solved in 1.35 (but is broken in 1.74!)

@@ -13,8 +13,6 @@ fn main() {
         let stream = stream.unwrap();
         pool.run(|| handle_connection(stream));
     }
-
-    // TODO: join all threads in the pool...?
 }
 
 fn handle_connection(mut stream: TcpStream) {
