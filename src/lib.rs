@@ -52,10 +52,10 @@ impl Drop for ThreadPool {
             self.sender.send(Message::Terminate).unwrap();
         }
 
-        println!("Shutting down all workers.");
+        println!("Waiting for all workers to exit...");
 
         for w in &mut self.workers {
-            println!("Shutting down worker {}.", w.id);
+            println!("Waiting for worker {}.", w.id);
 
             if let Some(thread) = w.thread.take() {
                 thread.join().unwrap();
@@ -71,6 +71,7 @@ struct Worker {
     thread: Option<thread::JoinHandle<()>>,
 }
 
+// A Worker thread
 impl Worker {
     fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Message>>>) -> Worker {
         let thread = thread::spawn(move || {
@@ -81,7 +82,8 @@ impl Worker {
                 match msg {
                     Message::NewJob(job) => {
                         println!("Worker {} got a NewJob - running!", id);
-                        job.call_box();
+                        // (*job)() gives E0161 "the size of `dyn FnOnce() + Send` cannot be statically determined", but this "just works"
+                        job();
                         println!("Worker {} finished the Job!", id);
                     }
                     Message::Terminate => {
@@ -98,23 +100,11 @@ impl Worker {
     }
 }
 
+// A Message that we sent to a Worker
 enum Message {
     NewJob(Job),
     Terminate,
 }
 
-// Workaround for weirdness in compiler, which was apparently solved in 1.35 (but is broken in 1.74!)
-trait FnBox {
-    fn call_box(self: Box<Self>);
-}
-
-impl<F: FnOnce()> FnBox for F {
-    fn call_box(self: Box<F>) {
-        (*self)()
-    }
-}
-
-type Job = Box<dyn FnBox + Send + 'static>;
-
-// Ideally this would "just work", and above weirdness wouldn't be needed.
-// type Job = Box<dyn FnOnce() + Send + 'static>;
+// A Job that we send to a Worker
+type Job = Box<dyn FnOnce() + Send + 'static>;
