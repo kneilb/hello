@@ -3,7 +3,7 @@ use std::thread;
 
 pub struct ThreadPool {
     workers: Vec<Worker>,
-    sender: mpsc::Sender<Message>,
+    sender: Option<mpsc::Sender<Job>>,
 }
 
 impl ThreadPool {
@@ -27,7 +27,10 @@ impl ThreadPool {
             workers.push(Worker::new(id, Arc::clone(&receiver)));
         }
 
-        ThreadPool { workers, sender }
+        ThreadPool {
+            workers,
+            sender: Some(sender),
+        }
     }
 
     /// Execute a function (or closure) in a thread from the pool.
@@ -39,18 +42,17 @@ impl ThreadPool {
     {
         let job = Box::new(func);
 
-        self.sender.send(Message::NewJob(job)).unwrap();
+        // I originally did this with if let, but the book does it this way!
+        self.sender.as_ref().unwrap().send(job).unwrap();
     }
 }
 
 impl Drop for ThreadPool {
     fn drop(&mut self) {
-        println!("Sending Terminate message to all workers.");
+        println!("Closing sender...");
 
-        // A worker will only ever read one Terminate message
-        for _ in &mut self.workers {
-            self.sender.send(Message::Terminate).unwrap();
-        }
+        // Close the sender; all receivers will get an error.
+        drop(self.sender.take());
 
         println!("Waiting for all workers to exit...");
 
@@ -66,28 +68,27 @@ impl Drop for ThreadPool {
     }
 }
 
+// A Worker thread
 struct Worker {
     id: usize,
     thread: Option<thread::JoinHandle<()>>,
 }
 
-// A Worker thread
 impl Worker {
-    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Message>>>) -> Worker {
+    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Worker {
         let thread = thread::spawn(move || {
             loop {
                 // Mutex guard dropped immediately after this statement.
                 // If we used while let, the lock would be held for the whole scope...!
-                let msg = receiver.lock().unwrap().recv().unwrap();
-                match msg {
-                    Message::NewJob(job) => {
-                        println!("Worker {} got a NewJob - running!", id);
+                match receiver.lock().unwrap().recv() {
+                    Ok(job) => {
+                        println!("Worker {id} got a Job - running!");
                         // (*job)() gives E0161 "the size of `dyn FnOnce() + Send` cannot be statically determined", but this "just works"
                         job();
-                        println!("Worker {} finished the Job!", id);
+                        println!("Worker {id} finished the Job!");
                     }
-                    Message::Terminate => {
-                        println!("Worker {} got Terminate - exiting!", id);
+                    Err(_) => {
+                        println!("Worker {id} disconnected - exiting!");
                         break;
                     }
                 }
@@ -98,12 +99,6 @@ impl Worker {
             thread: Some(thread),
         }
     }
-}
-
-// A Message that we sent to a Worker
-enum Message {
-    NewJob(Job),
-    Terminate,
 }
 
 // A Job that we send to a Worker
