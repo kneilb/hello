@@ -37,12 +37,12 @@ impl ThreadPool {
     ///
     pub fn run<F>(&self, func: F)
     where
-        F: FnOnce(),
+        F: FnOnce() -> (),
         F: Send + 'static,
     {
         let job = Box::new(func);
 
-        // I originally did this with if let, but the book does it this way!
+        // I originally did this with if let, but the book uses as_ref, which makes sense!
         self.sender.as_ref().unwrap().send(job).unwrap();
     }
 }
@@ -76,21 +76,21 @@ struct Worker {
 
 impl Worker {
     fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Worker {
-        let thread = thread::spawn(move || {
-            loop {
-                // Mutex guard dropped immediately after this statement.
-                // If we used while let, the lock would be held for the whole scope...!
-                match receiver.lock().unwrap().recv() {
-                    Ok(job) => {
-                        println!("Worker {id} got a Job - running!");
-                        // (*job)() gives E0161 "the size of `dyn FnOnce() + Send` cannot be statically determined", but this "just works"
-                        job();
-                        println!("Worker {id} finished the Job!");
-                    }
-                    Err(_) => {
-                        println!("Worker {id} disconnected - exiting!");
-                        break;
-                    }
+        let thread = thread::spawn(move || loop {
+            // Mutex guard dropped immediately after this statement.
+            // If we used while let, the lock would be held for the whole scope...!
+            let job = receiver.lock().unwrap().recv();
+
+            match job {
+                Ok(job) => {
+                    println!("Worker {id} got a Job - running!");
+                    // (*job)() gives E0161 "the size of `dyn FnOnce() + Send` cannot be statically determined", but this "just works"
+                    job();
+                    println!("Worker {id} finished the Job!");
+                }
+                Err(_) => {
+                    println!("Worker {id} disconnected - exiting!");
+                    break;
                 }
             }
         });
